@@ -1,0 +1,57 @@
+name: Azure CI/CD – ACR to VM
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  build-push-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run tests
+        run: npm test
+
+      - name: Login to Azure Container Registry
+        run: |
+          echo "${{ secrets.ACR_PASSWORD }}" | docker login acedevopsdemoacr.azurecr.io \
+          -u ${{ secrets.ACR_USERNAME }} --password-stdin
+
+      - name: Build Docker image
+        run: |
+          docker build -t acedevopsdemoacr.azurecr.io/devops:latest .
+
+      - name: Push Docker image to ACR
+        run: |
+          docker push acedevopsdemoacr.azurecr.io/devops:latest
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy on Azure VM (Run Command)
+        uses: azure/CLI@v2
+        with:
+          inlineScript: |
+            az vm run-command invoke \
+              --resource-group "${{ secrets.AZURE_RG }}" \
+              --name "${{ secrets.AZURE_VM_NAME }}" \
+              --command-id RunShellScript \
+              --scripts "
+                sudo docker pull acedevopsdemoacr.azurecr.io/devops:latest &&
+                sudo docker stop app || true &&
+                sudo docker rm app || true &&
+                sudo docker run -d -p 80:3000 --name app acedevopsdemoacr.azurecr.io/devops:latest
+              "
